@@ -29,6 +29,9 @@ export function priceFor(
       : event.standardPrice;
 }
 
+/**
+ * Release expired seat holds and waitlist offers.
+ */
 export async function expireHolds(tx = db) {
   const now = new Date();
 
@@ -74,6 +77,13 @@ export async function expireHolds(tx = db) {
   });
 }
 
+/**
+ * Temporarily hold one or more seats.
+ *
+ * Important concurrency behavior:
+ * The ShowSeat rows are locked with SELECT ... FOR UPDATE
+ * before their availability is checked.
+ */
 export async function holdSeats(
   eventId: string,
   userId: string,
@@ -106,14 +116,14 @@ export async function holdSeats(
       throw new Error('One or more seats do not exist');
     }
 
-    const ids = seats.map(s => s.id);
+    const ids = seats.map(seat => seat.id);
 
     /*
-     * Lock all requested seats before checking their status.
+     * Lock the requested ShowSeat rows.
      *
-     * This is critical for concurrency:
-     * if two customers try to hold the same seat at the
-     * same time, one transaction obtains the row lock first.
+     * If two users try to hold the same seat concurrently,
+     * one transaction gets the lock first. The second transaction
+     * waits and then re-checks the seat state.
      */
     await tx.$queryRaw`
       SELECT id
@@ -137,10 +147,10 @@ export async function holdSeats(
 
     if (
       fresh.some(
-        s =>
-          s.status === SeatStatus.BOOKED ||
-          (s.status === SeatStatus.HELD &&
-            s.heldById !== userId)
+        seat =>
+          seat.status === SeatStatus.BOOKED ||
+          (seat.status === SeatStatus.HELD &&
+            seat.heldById !== userId)
       )
     ) {
       throw new Error('SEATS_UNAVAILABLE');
@@ -170,20 +180,27 @@ export async function holdSeats(
       holdToken: token,
       expiresAt: expires,
 
-      seats: fresh.map(s => ({
-        id: s.seatId,
-        row: s.seat.rowLabel,
-        number: s.seat.seatNumber,
-        category: s.seat.category,
+      seats: fresh.map(seat => ({
+        id: seat.seatId,
+        row: seat.seat.rowLabel,
+        number: seat.seat.seatNumber,
+        category: seat.seat.category,
         price: priceFor(
-          s.seat.category,
-          s.event
+          seat.seat.category,
+          seat.event
         ),
       })),
     };
   });
 }
 
+/**
+ * Confirm a previously created seat hold.
+ *
+ * The seats are locked and re-read before the booking is created.
+ * This prevents a concurrent transaction from changing the seat
+ * state while confirmation is taking place.
+ */
 export async function confirmBooking(
   userId: string,
   eventId: string,
@@ -191,6 +208,11 @@ export async function confirmBooking(
   idempotencyKey: string
 ) {
   return db.$transaction(async tx => {
+    /*
+     * Idempotency protection:
+     * If the same request is submitted twice, return the
+     * existing booking instead of creating another booking.
+     */
     const old = await tx.booking.findUnique({
       where: {
         idempotencyKey,
@@ -205,8 +227,47 @@ export async function confirmBooking(
 
     await expireHolds(tx);
 
+    /*
+     * First locate the seats associated with this hold.
+     */
+    const candidateSeats = await tx.showSeat.findMany({
+      where: {
+        eventId,
+        holdToken,
+        status: SeatStatus.HELD,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!candidateSeats.length) {
+      throw new Error('HOLD_EXPIRED');
+    }
+
+    const seatIds = candidateSeats.map(
+      seat => seat.id
+    );
+
+    /*
+     * Lock the seats before checking them again.
+     */
+    await tx.$queryRaw`
+      SELECT id
+      FROM "ShowSeat"
+      WHERE id IN (${Prisma.join(seatIds)})
+      ORDER BY id
+      FOR UPDATE
+    `;
+
+    /*
+     * Re-read the locked rows.
+     */
     const seats = await tx.showSeat.findMany({
       where: {
+        id: {
+          in: seatIds,
+        },
         eventId,
         holdToken,
         status: SeatStatus.HELD,
@@ -217,13 +278,21 @@ export async function confirmBooking(
       },
     });
 
+    /*
+     * Verify:
+     * 1. All seats still exist.
+     * 2. All seats are still part of this hold.
+     * 3. The hold belongs to this user.
+     * 4. The hold has not expired.
+     */
     if (
       !seats.length ||
+      seats.length !== seatIds.length ||
       seats.some(
-        s =>
-          s.heldById !== userId ||
-          !s.holdExpiresAt ||
-          s.holdExpiresAt <= now
+        seat =>
+          seat.heldById !== userId ||
+          !seat.holdExpiresAt ||
+          seat.holdExpiresAt <= now
       )
     ) {
       throw new Error('HOLD_EXPIRED');
@@ -237,15 +306,18 @@ export async function confirmBooking(
         .toUpperCase();
 
     const total = seats.reduce(
-      (sum, s) =>
+      (sum, seat) =>
         sum +
         priceFor(
-          s.seat.category,
-          s.event
+          seat.seat.category,
+          seat.event
         ),
       0
     );
 
+    /*
+     * Create the booking while the seat rows are locked.
+     */
     const booking = await tx.booking.create({
       data: {
         reference,
@@ -256,21 +328,24 @@ export async function confirmBooking(
         qrPayload: reference,
 
         items: {
-          create: seats.map(s => ({
-            showSeatId: s.id,
+          create: seats.map(seat => ({
+            showSeatId: seat.id,
             price: priceFor(
-              s.seat.category,
-              s.event
+              seat.seat.category,
+              seat.event
             ),
           })),
         },
       },
     });
 
+    /*
+     * Convert the held seats into booked seats.
+     */
     await tx.showSeat.updateMany({
       where: {
         id: {
-          in: seats.map(s => s.id),
+          in: seatIds,
         },
       },
       data: {
@@ -286,6 +361,10 @@ export async function confirmBooking(
   });
 }
 
+/**
+ * Cancel a confirmed booking and offer the released seats
+ * to the earliest matching waitlist customer.
+ */
 export async function cancelBooking(
   userId: string,
   bookingId: string
@@ -328,6 +407,9 @@ export async function cancelBooking(
     });
 
     for (const item of booking.items) {
+      /*
+       * First make the seat available.
+       */
       await tx.showSeat.update({
         where: {
           id: item.showSeatId,
@@ -338,6 +420,10 @@ export async function cancelBooking(
         },
       });
 
+      /*
+       * Find the earliest waiting customer for this
+       * seat category.
+       */
       const entry =
         await tx.waitlistEntry.findFirst({
           where: {
@@ -357,6 +443,9 @@ export async function cancelBooking(
             offerTTL() * 1000
         );
 
+        /*
+         * Create a time-limited offer.
+         */
         await tx.waitlistOffer.create({
           data: {
             entryId: entry.id,
@@ -367,6 +456,9 @@ export async function cancelBooking(
           },
         });
 
+        /*
+         * Mark the waitlist entry as having an active offer.
+         */
         await tx.waitlistEntry.update({
           where: {
             id: entry.id,
@@ -376,6 +468,10 @@ export async function cancelBooking(
           },
         });
 
+        /*
+         * Temporarily hold the released seat for
+         * the waitlist customer.
+         */
         await tx.showSeat.update({
           where: {
             id: item.showSeatId,

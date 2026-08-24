@@ -1,12 +1,48 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+generator client {
+  provider = "prisma-client-js"
+}
 
-enum Role { CUSTOMER ORGANISER ADMIN }
-enum EventType { MOVIE CONCERT OTHER }
-enum SeatCategory { PREMIUM STANDARD VIP }
-enum SeatStatus { AVAILABLE HELD BOOKED }
-enum BookingStatus { CONFIRMED CANCELLED }
-enum WaitlistStatus { WAITING OFFERED CONVERTED EXPIRED CANCELLED }
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ORGANISER
+  ADMIN
+}
+
+enum EventType {
+  MOVIE
+  CONCERT
+  OTHER
+}
+
+enum SeatCategory {
+  PREMIUM
+  STANDARD
+  VIP
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  CONVERTED
+  EXPIRED
+  CANCELLED
+}
 
 model User {
   id String @id @default(cuid())
@@ -38,10 +74,11 @@ model Seat {
   rowLabel String
   seatNumber Int
   category SeatCategory
-  venue Venue @relation(fields:[venueId], references:[id], onDelete:Cascade)
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
   showSeats ShowSeat[]
-  @@unique([venueId,rowLabel,seatNumber])
-  @@index([venueId,category])
+
+  @@unique([venueId, rowLabel, seatNumber])
+  @@index([venueId, category])
 }
 
 model Event {
@@ -56,12 +93,13 @@ model Event {
   premiumPrice Int
   standardPrice Int
   vipPrice Int
-  venue Venue @relation(fields:[venueId], references:[id])
+  venue Venue @relation(fields: [venueId], references: [id])
   showSeats ShowSeat[]
   bookings Booking[]
   waitlistEntries WaitlistEntry[]
   createdAt DateTime @default(now())
-  @@index([startsAt,published])
+
+  @@index([startsAt, published])
 }
 
 model ShowSeat {
@@ -73,13 +111,14 @@ model ShowSeat {
   holdToken String? @unique
   holdExpiresAt DateTime?
   bookedAt DateTime?
-  event Event @relation(fields:[eventId], references:[id], onDelete:Cascade)
-  seat Seat @relation(fields:[seatId], references:[id], onDelete:Cascade)
-  heldBy User? @relation("SeatHolder", fields:[heldById], references:[id])
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  seat Seat @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  heldBy User? @relation("SeatHolder", fields: [heldById], references: [id])
   bookingItems BookingItem[]
-  @@unique([eventId,seatId])
-  @@index([eventId,status])
-  @@index([eventId,holdExpiresAt])
+
+  @@unique([eventId, seatId])
+  @@index([eventId, status])
+  @@index([eventId, holdExpiresAt])
 }
 
 model Booking {
@@ -91,13 +130,14 @@ model Booking {
   totalAmount Int
   idempotencyKey String @unique
   qrPayload String?
-  user User @relation(fields:[userId], references:[id])
-  event Event @relation(fields:[eventId], references:[id])
+  user User @relation(fields: [userId], references: [id])
+  event Event @relation(fields: [eventId], references: [id])
   items BookingItem[]
   createdAt DateTime @default(now())
   cancelledAt DateTime?
-  @@index([userId,createdAt])
-  @@index([eventId,status])
+
+  @@index([userId, createdAt])
+  @@index([eventId, status])
 }
 
 model BookingItem {
@@ -105,9 +145,10 @@ model BookingItem {
   bookingId String
   showSeatId String
   price Int
-  booking Booking @relation(fields:[bookingId], references:[id], onDelete:Cascade)
-  showSeat ShowSeat @relation(fields:[showSeatId], references:[id])
-  @@unique([bookingId,showSeatId])
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  showSeat ShowSeat @relation(fields: [showSeatId], references: [id])
+
+  @@unique([bookingId, showSeatId])
 }
 
 model WaitlistEntry {
@@ -117,11 +158,12 @@ model WaitlistEntry {
   category SeatCategory
   status WaitlistStatus @default(WAITING)
   joinedAt DateTime @default(now())
-  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
-  event Event @relation(fields:[eventId], references:[id], onDelete:Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   offers WaitlistOffer[]
-  @@unique([userId,eventId,category])
-  @@index([eventId,category,status,joinedAt])
+
+  @@unique([userId, eventId, category])
+  @@index([eventId, category, status, joinedAt])
 }
 
 model WaitlistOffer {
@@ -132,8 +174,9 @@ model WaitlistOffer {
   showSeatId String
   expiresAt DateTime
   status WaitlistStatus @default(OFFERED)
-  entry WaitlistEntry @relation(fields:[entryId], references:[id], onDelete:Cascade)
-  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
-  @@index([eventId,showSeatId,status])
-  @@index([expiresAt,status])
+  entry WaitlistEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, showSeatId, status])
+  @@index([expiresAt, status])
 }

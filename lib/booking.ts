@@ -80,8 +80,7 @@ export async function expireHolds(tx = db) {
 /**
  * Temporarily hold one or more seats.
  *
- * Important concurrency behavior:
- * The ShowSeat rows are locked with SELECT ... FOR UPDATE
+ * The requested ShowSeat rows are locked with SELECT ... FOR UPDATE
  * before their availability is checked.
  */
 export async function holdSeats(
@@ -119,11 +118,11 @@ export async function holdSeats(
     const ids = seats.map(seat => seat.id);
 
     /*
-     * Lock the requested ShowSeat rows.
+     * Lock requested seats.
      *
      * If two users try to hold the same seat concurrently,
-     * one transaction gets the lock first. The second transaction
-     * waits and then re-checks the seat state.
+     * one transaction obtains the lock first. The other waits
+     * and then checks the latest seat state.
      */
     await tx.$queryRaw`
       SELECT id
@@ -197,9 +196,8 @@ export async function holdSeats(
 /**
  * Confirm a previously created seat hold.
  *
- * The seats are locked and re-read before the booking is created.
- * This prevents a concurrent transaction from changing the seat
- * state while confirmation is taking place.
+ * Uses idempotency protection and row-level locking
+ * to prevent duplicate bookings and concurrent seat races.
  */
 export async function confirmBooking(
   userId: string,
@@ -209,9 +207,7 @@ export async function confirmBooking(
 ) {
   return db.$transaction(async tx => {
     /*
-     * Idempotency protection:
-     * If the same request is submitted twice, return the
-     * existing booking instead of creating another booking.
+     * Idempotency protection.
      */
     const old = await tx.booking.findUnique({
       where: {
@@ -228,7 +224,7 @@ export async function confirmBooking(
     await expireHolds(tx);
 
     /*
-     * First locate the seats associated with this hold.
+     * Find seats belonging to this hold.
      */
     const candidateSeats = await tx.showSeat.findMany({
       where: {
@@ -250,7 +246,7 @@ export async function confirmBooking(
     );
 
     /*
-     * Lock the seats before checking them again.
+     * Lock seats before checking them again.
      */
     await tx.$queryRaw`
       SELECT id
@@ -261,7 +257,7 @@ export async function confirmBooking(
     `;
 
     /*
-     * Re-read the locked rows.
+     * Re-read the locked seats.
      */
     const seats = await tx.showSeat.findMany({
       where: {
@@ -281,7 +277,7 @@ export async function confirmBooking(
     /*
      * Verify:
      * 1. All seats still exist.
-     * 2. All seats are still part of this hold.
+     * 2. All seats still belong to this hold.
      * 3. The hold belongs to this user.
      * 4. The hold has not expired.
      */
@@ -316,7 +312,7 @@ export async function confirmBooking(
     );
 
     /*
-     * Create the booking while the seat rows are locked.
+     * Create booking while seats are locked.
      */
     const booking = await tx.booking.create({
       data: {
@@ -340,7 +336,7 @@ export async function confirmBooking(
     });
 
     /*
-     * Convert the held seats into booked seats.
+     * Convert held seats into booked seats.
      */
     await tx.showSeat.updateMany({
       where: {
@@ -362,7 +358,7 @@ export async function confirmBooking(
 }
 
 /**
- * Cancel a confirmed booking and offer the released seats
+ * Cancel a confirmed booking and offer released seats
  * to the earliest matching waitlist customer.
  */
 export async function cancelBooking(
@@ -408,7 +404,7 @@ export async function cancelBooking(
 
     for (const item of booking.items) {
       /*
-       * First make the seat available.
+       * Release the seat.
        */
       await tx.showSeat.update({
         where: {
@@ -421,8 +417,8 @@ export async function cancelBooking(
       });
 
       /*
-       * Find the earliest waiting customer for this
-       * seat category.
+       * Find the earliest waiting customer
+       * for this seat category.
        */
       const entry =
         await tx.waitlistEntry.findFirst({
@@ -439,12 +435,11 @@ export async function cancelBooking(
 
       if (entry) {
         const expiresAt = new Date(
-          Date.now() +
-            offerTTL() * 1000
+          Date.now() + offerTTL() * 1000
         );
 
         /*
-         * Create a time-limited offer.
+         * Create time-limited waitlist offer.
          */
         await tx.waitlistOffer.create({
           data: {
@@ -457,7 +452,7 @@ export async function cancelBooking(
         });
 
         /*
-         * Mark the waitlist entry as having an active offer.
+         * Mark waitlist entry as offered.
          */
         await tx.waitlistEntry.update({
           where: {
@@ -469,8 +464,8 @@ export async function cancelBooking(
         });
 
         /*
-         * Temporarily hold the released seat for
-         * the waitlist customer.
+         * Temporarily hold the seat for the
+         * waitlisted customer.
          */
         await tx.showSeat.update({
           where: {

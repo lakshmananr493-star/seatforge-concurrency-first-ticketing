@@ -5,21 +5,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: seatforge
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres -d seatforge"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seatforge?schema=public
-      JWT_SECRET: ci-secret-ci-secret-ci-secret
-      HOLD_TTL_SECONDS: 600
-      WAITLIST_OFFER_TTL_SECONDS: 300
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,5 +12,4 @@ jobs:
           node-version: 24
       - run: npm install
       - run: npx prisma generate
-      - run: npx prisma db push --accept-data-loss
       - run: npm test

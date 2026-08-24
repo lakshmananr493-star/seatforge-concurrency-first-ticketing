@@ -26,5 +26,6 @@ jobs:
         with:
           node-version: 24
       - run: npm install
-      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npx prisma db push --accept-data-loss
       - run: npm test

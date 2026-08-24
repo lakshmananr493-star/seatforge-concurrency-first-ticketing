@@ -1,0 +1,2 @@
+import { db } from '@/lib/db'; import { expireHolds } from '@/lib/booking';
+export async function GET(_:Request,{params}:{params:Promise<{id:string}>}){const {id}=await params;await expireHolds();const seats=await db.showSeat.findMany({where:{eventId:id},include:{seat:true},orderBy:[{seat:{rowLabel:'asc'}},{seat:{seatNumber:'asc'}}]});return Response.json(seats.map(s=>({id:s.seatId,row:s.seat.rowLabel,number:s.seat.seatNumber,category:s.seat.category,status:s.status,expiresAt:s.holdExpiresAt})))}

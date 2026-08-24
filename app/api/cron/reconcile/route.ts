@@ -1,0 +1,3 @@
+import { expireHolds } from '@/lib/booking'; import { db } from '@/lib/db'; import { WaitlistStatus,SeatStatus } from '@prisma/client';
+export async function POST(req:Request){if(process.env.CRON_SECRET&&req.headers.get('authorization')!==`Bearer ${process.env.CRON_SECRET}`)return Response.json({error:'Unauthorized'},{status:401});await expireHolds();const offers=await db.waitlistOffer.findMany({where:{status:WaitlistStatus.OFFERED,expiresAt:{lt:new Date()}},include:{entry:true}});for(const o of offers)await db.waitlistEntry.update({where:{id:o.entryId},data:{status:WaitlistStatus.WAITING}});return Response.json({releasedHolds:true,requeuedOffers:offers.length})}
+export async function GET(req:Request){return POST(req)}

@@ -1,0 +1,2 @@
+import { getSession } from '@/lib/auth'; import { db } from '@/lib/db'; import { waitlistSchema } from '@/lib/validation'; import { jsonError } from '@/lib/http';
+export async function POST(req:Request){const s=await getSession();if(!s)return jsonError('Login required',401);try{const p=waitlistSchema.parse(await req.json());const x=await db.waitlistEntry.create({data:{userId:s.id,eventId:p.eventId,category:p.category}});return Response.json(x,{status:201})}catch(e:any){return jsonError(e?.code==='P2002'?'Already on this waitlist':e?.message||'Unable to join waitlist',409)}}

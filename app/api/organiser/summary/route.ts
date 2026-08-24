@@ -1,0 +1,2 @@
+import {requireRole} from '@/lib/auth'; import {db} from '@/lib/db'; import {jsonError} from '@/lib/http';
+export async function GET(){try{await requireRole(['ORGANISER']);const events=await db.event.findMany({include:{venue:true,bookings:{where:{status:'CONFIRMED'},select:{totalAmount:true}}},orderBy:{startsAt:'desc'}});return Response.json(events.map(e=>({id:e.id,title:e.title,venue:e.venue.name,startsAt:e.startsAt,bookings:e.bookings.length,revenue:e.bookings.reduce((a,b)=>a+b.totalAmount,0)})))}catch(e:any){return jsonError(e?.message||'Forbidden',403)}}

@@ -1,0 +1,3 @@
+import './globals.css'; import Link from 'next/link';
+export const metadata={title:'SeatForge — Concurrency-First Ticketing',description:'Smart seat booking with expiring holds and fair waitlists'};
+export default function Layout({children}:{children:React.ReactNode}){return <><div className="shell"><nav className="nav"><Link href="/" className="brand">Seat<span>Forge</span></Link><div className="navlinks"><Link href="/">Discover</Link><Link href="/dashboard">Dashboard</Link><Link href="/login">Login</Link></div></nav>{children}<div className="footer">SeatForge • built for the hard parts of ticketing</div></div></>}
